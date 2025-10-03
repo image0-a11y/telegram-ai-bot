@@ -5,8 +5,8 @@ from flask import Flask, request
 app = Flask(__name__)
 
 # Environment variables থেকে Token নেওয়া
-TELEGRAM_TOKEN = os.environ.get("7903219090:AAH91uNk38i8TDGl2YwP7o1h8jt6uNZZWus")
-GEMINI_API_KEY = os.environ.get("AIzaSyBwvBgDDgBPvwDqT7Funy3RDApzLoRbdI8")
+TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 
 def send_message(chat_id, text):
     """টেলিগ্রামে মেসেজ পাঠানোর ফাংশন"""
