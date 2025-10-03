@@ -1,31 +1,27 @@
 import os
 import requests
-import time
 from flask import Flask, request
 
 app = Flask(__name__)
 
 # Environment variables থেকে Token নেওয়া
-TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
-HUGGINGFACE_TOKEN = os.environ.get("HUGGINGFACE_TOKEN")
-
-# একাধিক মডেল ব্যবহার করা যাবে (fallback এর জন্য)
-MODELS = [
-    "facebook/blenderbot-400M-distill",  # দ্রুত এবং ভালো
-    "microsoft/DialoGPT-medium",  # backup
-]
+TELEGRAM_TOKEN = os.environ.get("7903219090:AAH91uNk38i8TDGl2YwP7o1h8jt6uNZZWus")
+GEMINI_API_KEY = os.environ.get("AIzaSyBwvBgDDgBPvwDqT7Funy3RDApzLoRbdI8")
 
 def send_message(chat_id, text):
     """টেলিগ্রামে মেসেজ পাঠানোর ফাংশন"""
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     data = {
         "chat_id": chat_id,
-        "text": text
+        "text": text,
+        "parse_mode": "Markdown"
     }
     try:
-        requests.post(url, data=data, timeout=10)
+        response = requests.post(url, json=data, timeout=10)
+        return response.json()
     except Exception as e:
         print(f"Error sending message: {e}")
+        return None
 
 def send_typing_action(chat_id):
     """Typing indicator পাঠানোর ফাংশন"""
@@ -35,75 +31,86 @@ def send_typing_action(chat_id):
         "action": "typing"
     }
     try:
-        requests.post(url, data=data, timeout=5)
+        requests.post(url, json=data, timeout=5)
     except:
         pass
 
-def get_ai_response(user_message):
-    """Hugging Face AI থেকে উত্তর পাওয়ার ফাংশন"""
+def get_gemini_response(user_message):
+    """Google Gemini AI থেকে উত্তর পাওয়ার ফাংশন"""
     
-    for model in MODELS:
-        try:
-            API_URL = f"https://api-inference.huggingface.co/models/{model}"
-            headers = {"Authorization": f"Bearer {HUGGINGFACE_TOKEN}"}
-            
-            payload = {
-                "inputs": user_message,
-                "parameters": {
-                    "max_new_tokens": 100,
-                    "temperature": 0.8,
-                    "top_p": 0.9,
-                    "return_full_text": False
-                },
-                "options": {
-                    "wait_for_model": True,
-                    "use_cache": False
-                }
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
+    
+    headers = {
+        "Content-Type": "application/json"
+    }
+    
+    payload = {
+        "contents": [
+            {
+                "parts": [
+                    {
+                        "text": user_message
+                    }
+                ]
             }
-            
-            # 60 সেকেন্ড পর্যন্ত অপেক্ষা করবে
-            response = requests.post(
-                API_URL, 
-                headers=headers, 
-                json=payload,
-                timeout=60
-            )
-            
-            if response.status_code == 200:
-                result = response.json()
-                
-                # বিভিন্ন response format handle করা
-                if isinstance(result, list) and len(result) > 0:
-                    if "generated_text" in result[0]:
-                        return result[0]["generated_text"]
-                    elif "text" in result[0]:
-                        return result[0]["text"]
-                elif isinstance(result, dict):
-                    if "generated_text" in result:
-                        return result["generated_text"]
-                    elif "text" in result:
-                        return result["text"]
-                
-            elif response.status_code == 503:
-                # Model loading হচ্ছে, পরের model try করো
-                print(f"Model {model} is loading, trying next...")
-                continue
-                
-        except requests.Timeout:
-            print(f"Timeout with model {model}, trying next...")
-            continue
-        except Exception as e:
-            print(f"Error with model {model}: {str(e)}")
-            continue
+        ],
+        "generationConfig": {
+            "temperature": 0.7,
+            "maxOutputTokens": 500,
+            "topP": 0.95,
+        }
+    }
     
-    # যদি সব model fail করে
-    return "হ্যালো! আমি এখনও শিখছি। আপনি ইংরেজিতে প্রশ্ন করলে আরও ভালো উত্তর দিতে পারবো। 😊"
+    try:
+        response = requests.post(
+            url,
+            headers=headers,
+            json=payload,
+            timeout=30
+        )
+        
+        print(f"Gemini Status Code: {response.status_code}")
+        
+        if response.status_code == 200:
+            result = response.json()
+            
+            # Response থেকে text বের করা
+            if "candidates" in result and len(result["candidates"]) > 0:
+                candidate = result["candidates"][0]
+                if "content" in candidate and "parts" in candidate["content"]:
+                    parts = candidate["content"]["parts"]
+                    if len(parts) > 0 and "text" in parts[0]:
+                        return parts[0]["text"].strip()
+            
+            return "দুঃখিত, আমি উত্তর তৈরি করতে পারিনি।"
+        
+        elif response.status_code == 400:
+            error_data = response.json()
+            print(f"API Error: {error_data}")
+            return "❌ Invalid request. অনুগ্রহ করে আপনার প্রশ্ন আবার লিখুন।"
+        
+        elif response.status_code == 429:
+            return "⏱️ অনেক বেশি request হয়ে গেছে। একটু পরে চেষ্টা করুন।"
+        
+        elif response.status_code == 403:
+            return "🔑 API key এ সমস্যা আছে। Admin কে জানান।"
+        
+        else:
+            return f"❌ Error (Code: {response.status_code}). আবার চেষ্টা করুন।"
+    
+    except requests.Timeout:
+        return "⏱️ Response পেতে সময় বেশি লাগছে। আবার চেষ্টা করুন।"
+    
+    except Exception as e:
+        print(f"Error: {str(e)}")
+        return "❌ একটি সমস্যা হয়েছে। আবার চেষ্টা করুন।"
 
 @app.route("/", methods=["POST"])
 def telegram_webhook():
     """টেলিগ্রাম থেকে মেসেজ গ্রহণ করার ফাংশন"""
     try:
         data = request.get_json()
+        print(f"Received webhook: {data}")
         
         if "message" in data:
             chat_id = data["message"]["chat"]["id"]
@@ -114,20 +121,39 @@ def telegram_webhook():
                 send_typing_action(chat_id)
                 
                 # বিশেষ commands handle করা
-                if user_message.lower() in ["/start", "/help"]:
+                if user_message.lower() == "/start":
                     welcome_msg = (
-                        "👋 হ্যালো! আমি একটি AI চ্যাটবট।\n\n"
-                        "আমাকে যেকোনো প্রশ্ন করতে পারেন।\n"
-                        "ইংরেজিতে লিখলে সবচেয়ে ভালো উত্তর পাবেন!\n\n"
-                        "উদাহরণ:\n"
-                        "- What is AI?\n"
-                        "- Tell me a joke\n"
-                        "- How are you?"
+                        "👋 *হ্যালো! আমি Google Gemini AI চ্যাটবট।*\n\n"
+                        "আমাকে বাংলা বা ইংরেজিতে যেকোনো প্রশ্ন করতে পারেন!\n\n"
+                        "📝 *উদাহরণ:*\n"
+                        "• AI কি?\n"
+                        "• What is Python?\n"
+                        "• একটা গল্প বলো\n"
+                        "• Explain quantum physics\n"
+                        "• বাংলাদেশ সম্পর্কে বলো\n\n"
+                        "কমান্ড:\n"
+                        "/start - শুরু করুন\n"
+                        "/help - সাহায্য"
                     )
                     send_message(chat_id, welcome_msg)
+                
+                elif user_message.lower() == "/help":
+                    help_msg = (
+                        "ℹ️ *কীভাবে ব্যবহার করবেন:*\n\n"
+                        "✅ বাংলা এবং ইংরেজি দুটোই supported\n"
+                        "✅ যেকোনো প্রশ্ন করতে পারেন\n"
+                        "✅ দ্রুত response পাবেন\n"
+                        "✅ Code, story, explanation সব করতে পারি\n\n"
+                        "*বিশেষ কমান্ড:*\n"
+                        "/start - শুরু করুন\n"
+                        "/help - এই help message\n\n"
+                        "Powered by *Google Gemini AI* 🤖"
+                    )
+                    send_message(chat_id, help_msg)
+                
                 else:
-                    # AI থেকে উত্তর নিন
-                    ai_response = get_ai_response(user_message)
+                    # Gemini AI থেকে উত্তর নিন
+                    ai_response = get_gemini_response(user_message)
                     
                     # টেলিগ্রামে পাঠান
                     send_message(chat_id, ai_response)
@@ -136,18 +162,66 @@ def telegram_webhook():
         
     except Exception as e:
         print(f"Webhook error: {str(e)}")
-        return "Error", 500
+        return "OK", 200
 
 @app.route("/")
 def home():
     """Bot চালু আছে কিনা চেক করার জন্য"""
-    return "✅ Bot is running! Send me a message on Telegram."
+    return """
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Telegram Bot</title>
+        <style>
+            body {
+                font-family: Arial, sans-serif;
+                display: flex;
+                justify-content: center;
+                align-items: center;
+                height: 100vh;
+                margin: 0;
+                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                color: white;
+            }
+            .container {
+                text-align: center;
+                background: rgba(255,255,255,0.1);
+                padding: 40px;
+                border-radius: 20px;
+                backdrop-filter: blur(10px);
+            }
+            h1 { margin: 0; font-size: 2.5em; }
+            .status { 
+                display: inline-block;
+                background: #10b981;
+                padding: 10px 20px;
+                border-radius: 25px;
+                margin-top: 20px;
+                font-weight: bold;
+            }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <h1>🤖 Telegram Bot</h1>
+            <div class="status">✅ Online & Running</div>
+            <p style="margin-top: 20px; opacity: 0.9;">Powered by Google Gemini AI</p>
+        </div>
+    </body>
+    </html>
+    """
 
 @app.route("/health")
 def health():
     """Health check endpoint"""
-    return {"status": "healthy", "bot": "online"}, 200
+    return {
+        "status": "healthy",
+        "bot": "online",
+        "ai": "Google Gemini",
+        "version": "2.0"
+    }, 200
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
+    print(f"🚀 Starting Gemini Bot on port {port}")
     app.run(host="0.0.0.0", port=port)
